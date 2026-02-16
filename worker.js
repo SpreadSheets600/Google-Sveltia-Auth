@@ -101,30 +101,50 @@ const parsePasswordUsers = (raw) => {
 
 	if (!text) return new Map();
 
+	const normalizeSecret = (secret) => {
+		const value = String(secret ?? "").trim();
+		if (!value) return null;
+		if (value.toLowerCase().startsWith("plain:")) {
+			const plain = value.slice(6);
+			return plain ? { type: "plain", value: plain } : null;
+		}
+		if (/^[a-f0-9]{64}$/i.test(value)) {
+			return { type: "hash", value: value.toLowerCase() };
+		}
+		return { type: "plain", value };
+	};
+
+	const entriesToMap = (entries) =>
+		new Map(
+			entries
+				.map(([email, secret]) => [String(email).toLowerCase(), normalizeSecret(secret)])
+				.filter(([email, parsed]) => email && parsed),
+		);
+
 	try {
 		if (text.startsWith("{")) {
 			const parsed = JSON.parse(text);
-			return new Map(Object.entries(parsed).map(([email, hash]) => [String(email).toLowerCase(), String(hash).toLowerCase()]));
+			return entriesToMap(Object.entries(parsed));
 		}
 
 		if (text.startsWith("[")) {
 			const parsed = JSON.parse(text);
-			return new Map(parsed.filter((item) => item?.email && item?.passwordSha256).map((item) => [String(item.email).toLowerCase(), String(item.passwordSha256).toLowerCase()]));
+			return entriesToMap(parsed.filter((item) => item?.email && (item?.passwordSha256 || item?.password)).map((item) => [item.email, item.passwordSha256 ?? item.password]));
 		}
 	} catch {
 		return new Map();
 	}
 
-	return new Map(
+	return entriesToMap(
 		text
 			.split(",")
 			.map((entry) => entry.trim())
 			.filter(Boolean)
 			.map((pair) => {
-				const [email, hash] = pair.split(":");
-				return [String(email).toLowerCase(), String(hash ?? "").toLowerCase()];
-			})
-			.filter(([email, hash]) => email && hash),
+				const i = pair.indexOf(":");
+				if (i < 0) return [pair, ""];
+				return [pair.slice(0, i), pair.slice(i + 1)];
+			}),
 	);
 };
 
@@ -179,13 +199,11 @@ const renderAuthPage = (provider, csrfToken, env) => {
 	const googleButton =
 		googleEnabled ?
 			`
-      <div id="g_id_onload"
-        data-client_id="${escapeHtml(googleClientId)}"
-        data-callback="onGoogleCredentialResponse"
-        data-auto_prompt="false"></div>
-      <div class="g_id_signin" data-type="standard" data-size="large"></div>
+      <div class="google-wrap">
+        <div id="googleSignInButton" class="google-button"></div>
+      </div>
     `
-		:	`<p class="muted">Google login is currently disabled.</p>`;
+			:	`<p class="muted">Google login is currently disabled.</p>`;
 
 	return new Response(
 		`
@@ -198,19 +216,30 @@ const renderAuthPage = (provider, csrfToken, env) => {
   ${googleScript}
   <style>
     :root { color-scheme: light; }
-    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f7fb; color: #111827; }
-    .wrap { max-width: 420px; margin: 5vh auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(17,24,39,.08); }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 20px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: radial-gradient(1200px 600px at 10% 0%, #eef2ff 0%, #f3f5fa 40%, #eef2f7 100%); color: #111827; }
+    .wrap { width: min(460px, 100%); background: #fff; border-radius: 16px; padding: 28px; box-shadow: 0 16px 40px rgba(15, 23, 42, .10); border: 1px solid #e5e7eb; }
     h1 { margin: 0 0 8px; font-size: 22px; }
-    p { margin: 0 0 16px; color: #374151; }
-    form { display: grid; gap: 12px; }
+    p { margin: 0 0 18px; color: #374151; line-height: 1.5; }
+    form { display: grid; gap: 10px; }
     label { font-weight: 600; font-size: 14px; }
-    input { width: 100%; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 12px; font-size: 14px; }
-    button { border: none; border-radius: 8px; background: #111827; color: white; padding: 10px 14px; font-size: 14px; cursor: pointer; }
-    .sep { margin: 16px 0; text-align: center; color: #6b7280; font-size: 12px; }
-    #status { margin-top: 12px; font-size: 14px; min-height: 20px; }
+    input { width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font-size: 14px; transition: border-color .15s ease, box-shadow .15s ease; background: #fff; }
+    input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79, 70, 229, .16); }
+    button { width: 100%; border: none; border-radius: 10px; background: linear-gradient(180deg, #1f2937 0%, #111827 100%); color: white; padding: 11px 14px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .08s ease, box-shadow .15s ease; }
+    button:hover { box-shadow: 0 8px 18px rgba(17, 24, 39, .18); }
+    button:active { transform: translateY(1px); }
+    .sep { margin: 18px 0 14px; display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; letter-spacing: .06em; font-weight: 600; }
+    .sep::before, .sep::after { content: ""; height: 1px; flex: 1; background: #e2e8f0; }
+    .google-wrap { width: 100%; min-height: 42px; }
+    .google-button { width: 100%; min-height: 42px; }
+    #status { margin-top: 14px; font-size: 14px; min-height: 20px; }
     .error { color: #b91c1c; }
     .ok { color: #047857; }
     .muted { color: #6b7280; font-size: 13px; }
+    @media (max-width: 480px) {
+      .wrap { padding: 20px; border-radius: 14px; }
+      h1 { font-size: 20px; }
+    }
   </style>
 </head>
 <body>
@@ -231,10 +260,11 @@ const renderAuthPage = (provider, csrfToken, env) => {
     <div id="status" class="muted"></div>
   </div>
 
-  <script>
-    const csrfToken = ${JSON.stringify(csrfToken)};
-    const provider = ${JSON.stringify(provider)};
-    const statusEl = document.getElementById("status");
+	  <script>
+	    const csrfToken = ${JSON.stringify(csrfToken)};
+	    const provider = ${JSON.stringify(provider)};
+	    const googleClientId = ${JSON.stringify(googleClientId)};
+	    const statusEl = document.getElementById("status");
 
     const setStatus = (text, kind = "muted") => {
       statusEl.textContent = text;
@@ -267,9 +297,9 @@ const renderAuthPage = (provider, csrfToken, env) => {
       document.close();
     });
 
-    window.onGoogleCredentialResponse = async (googleResponse) => {
-      setStatus("Verifying Google sign-in...", "muted");
-      const response = await fetch("/auth/google", {
+	    window.onGoogleCredentialResponse = async (googleResponse) => {
+	      setStatus("Verifying Google sign-in...", "muted");
+	      const response = await fetch("/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -285,11 +315,58 @@ const renderAuthPage = (provider, csrfToken, env) => {
         return;
       }
 
-      document.open();
-      document.write(await response.text());
-      document.close();
-    };
-  </script>
+	      document.open();
+	      document.write(await response.text());
+	      document.close();
+	    };
+
+	    let resizeTimer;
+	    let googleInitialized = false;
+
+	    const renderGoogleButton = () => {
+	      if (!googleClientId) return;
+	      const container = document.getElementById("googleSignInButton");
+	      if (!container) return;
+	      if (!window.google?.accounts?.id) return;
+
+	      if (!googleInitialized) {
+	        window.google.accounts.id.initialize({
+	          client_id: googleClientId,
+	          callback: window.onGoogleCredentialResponse,
+	          auto_select: false,
+	          cancel_on_tap_outside: true,
+	        });
+	        googleInitialized = true;
+	      }
+
+	      const width = Math.max(220, Math.floor(container.clientWidth));
+	      container.innerHTML = "";
+	      window.google.accounts.id.renderButton(container, {
+	        type: "standard",
+	        theme: "outline",
+	        size: "large",
+	        text: "continue_with",
+	        shape: "rectangular",
+	        width,
+	        logo_alignment: "left",
+	      });
+	    };
+
+	    const initGoogleButton = () => {
+	      if (!googleClientId) return;
+	      if (window.google?.accounts?.id) {
+	        renderGoogleButton();
+	        window.addEventListener("resize", () => {
+	          clearTimeout(resizeTimer);
+	          resizeTimer = setTimeout(renderGoogleButton, 120);
+	        });
+	        return;
+	      }
+	      setTimeout(initGoogleButton, 120);
+	    };
+
+	    initGoogleButton();
+	  </script>
 </body>
 </html>`,
 		{ headers: htmlHeaders },
@@ -353,10 +430,11 @@ const handleEmailAuth = async (request, env) => {
 	if (!email || !password) return badRequest("Email and password are required.");
 
 	const users = parsePasswordUsers(env.EMAIL_PASSWORD_USERS);
-	const expectedHash = users.get(email);
-	if (!expectedHash) return unauthorized("Email is not allowlisted for password login.");
+	const expectedSecret = users.get(email);
+	if (!expectedSecret) return unauthorized("Email is not allowlisted for password login.");
 
 	const inputHash = await sha256Hex(password);
+	const expectedHash = expectedSecret.type === "hash" ? expectedSecret.value : await sha256Hex(expectedSecret.value);
 	if (inputHash !== expectedHash) return unauthorized("Invalid email/password.");
 
 	return outputHTML({ provider, token: env.GITHUB_PAT });
