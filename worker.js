@@ -39,6 +39,9 @@ const decodeJSON = async (request) => {
 const outputHTML = ({ provider = "unknown", token, error, errorCode }) => {
 	const state = error ? "error" : "success";
 	const content = error ? { provider, error, errorCode } : { provider, token };
+	const headers = new Headers(htmlHeaders);
+	headers.append("Set-Cookie", "cms-auth-csrf=deleted; HttpOnly; Max-Age=0; Path=/; SameSite=Lax; Secure");
+	headers.append("Set-Cookie", "cms-auth-oauth-state=deleted; HttpOnly; Max-Age=0; Path=/; SameSite=Lax; Secure");
 
 	return new Response(
 		`
@@ -56,12 +59,7 @@ const outputHTML = ({ provider = "unknown", token, error, errorCode }) => {
         })();
       </script></body></html>
     `,
-		{
-			headers: {
-				...htmlHeaders,
-				"Set-Cookie": "cms-auth-csrf=deleted; HttpOnly; Max-Age=0; Path=/; SameSite=Lax; Secure",
-			},
-		},
+		{ headers },
 	);
 };
 
@@ -95,6 +93,18 @@ const isAllowedGoogleEmail = (email, env) => {
 	return allowlist.includes(email.toLowerCase());
 };
 
+const isAllowedGitHubLogin = (login, env) => {
+	const allowlist = toLowerList(env.ALLOWED_GITHUB_LOGINS);
+	if (!allowlist.length) return false;
+	return allowlist.includes(String(login ?? "").toLowerCase());
+};
+
+const isAllowedGitHubEmail = (email, env) => {
+	const allowlist = toLowerList(env.ALLOWED_GITHUB_EMAILS);
+	if (!allowlist.length) return false;
+	return allowlist.includes(String(email ?? "").toLowerCase());
+};
+
 const parsePasswordUsers = (raw) => {
 	if (!raw) return new Map();
 	const text = raw.trim();
@@ -114,12 +124,7 @@ const parsePasswordUsers = (raw) => {
 		return { type: "plain", value };
 	};
 
-	const entriesToMap = (entries) =>
-		new Map(
-			entries
-				.map(([email, secret]) => [String(email).toLowerCase(), normalizeSecret(secret)])
-				.filter(([email, parsed]) => email && parsed),
-		);
+	const entriesToMap = (entries) => new Map(entries.map(([email, secret]) => [String(email).toLowerCase(), normalizeSecret(secret)]).filter(([email, parsed]) => email && parsed));
 
 	try {
 		if (text.startsWith("{")) {
@@ -196,6 +201,11 @@ const renderAuthPage = (provider, csrfToken, env) => {
 	const googleClientId = env.GOOGLE_CLIENT_ID ?? "";
 	const googleEnabled = Boolean(googleClientId);
 	const googleScript = googleEnabled ? `<script src="https://accounts.google.com/gsi/client" async defer></script>` : "";
+	const githubOauthEnabled = Boolean(env.GITHUB_OAUTH_CLIENT_ID && env.GITHUB_OAUTH_CLIENT_SECRET);
+	const githubButton =
+		githubOauthEnabled ?
+			`<button id="githubOAuthButton" type="button" class="oauth-btn">Continue with GitHub</button>`
+		:	`<p class="muted">GitHub OAuth is currently disabled.</p>`;
 	const googleButton =
 		googleEnabled ?
 			`
@@ -203,7 +213,7 @@ const renderAuthPage = (provider, csrfToken, env) => {
         <div id="googleSignInButton" class="google-button"></div>
       </div>
     `
-			:	`<p class="muted">Google login is currently disabled.</p>`;
+		:	`<p class="muted">Google login is currently disabled.</p>`;
 
 	return new Response(
 		`
@@ -230,6 +240,8 @@ const renderAuthPage = (provider, csrfToken, env) => {
     button:active { transform: translateY(1px); }
     .sep { margin: 18px 0 14px; display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; letter-spacing: .06em; font-weight: 600; }
     .sep::before, .sep::after { content: ""; height: 1px; flex: 1; background: #e2e8f0; }
+    .oauth-btn { background: #0f172a; }
+    .oauth-btn:hover { box-shadow: 0 8px 18px rgba(15, 23, 42, .2); }
     .google-wrap { width: 100%; min-height: 42px; }
     .google-button { width: 100%; min-height: 42px; }
     #status { margin-top: 14px; font-size: 14px; min-height: 20px; }
@@ -256,6 +268,8 @@ const renderAuthPage = (provider, csrfToken, env) => {
     </form>
 
     <div class="sep">OR</div>
+    ${githubButton}
+    <div class="sep">OR</div>
     ${googleButton}
     <div id="status" class="muted"></div>
   </div>
@@ -264,6 +278,7 @@ const renderAuthPage = (provider, csrfToken, env) => {
 	    const csrfToken = ${JSON.stringify(csrfToken)};
 	    const provider = ${JSON.stringify(provider)};
 	    const googleClientId = ${JSON.stringify(googleClientId)};
+	    const githubOAuthEnabled = ${JSON.stringify(githubOauthEnabled)};
 	    const statusEl = document.getElementById("status");
 
     const setStatus = (text, kind = "muted") => {
@@ -296,6 +311,13 @@ const renderAuthPage = (provider, csrfToken, env) => {
       document.write(await response.text());
       document.close();
     });
+
+	    document.getElementById("githubOAuthButton")?.addEventListener("click", () => {
+	      if (!githubOAuthEnabled) return;
+	      setStatus("Redirecting to GitHub...", "muted");
+	      const params = new URLSearchParams({ provider, csrfToken });
+	      window.location.href = "/auth/github/start?" + params.toString();
+	    });
 
 	    window.onGoogleCredentialResponse = async (googleResponse) => {
 	      setStatus("Verifying Google sign-in...", "muted");
@@ -457,6 +479,143 @@ const handleGoogleAuth = async (request, env) => {
 	return outputHTML({ provider, token: env.GITHUB_PAT });
 };
 
+const handleGitHubOAuthStart = async (request, env) => {
+	const url = new URL(request.url);
+	const provider = getProvider(url.toString());
+	const csrfToken = String(url.searchParams.get("csrfToken") ?? "");
+
+	if (!supportedProviders.includes(provider)) {
+		return outputHTML({ provider, error: "Unsupported provider.", errorCode: "UNSUPPORTED_PROVIDER" });
+	}
+	if (!verifyCsrf(request, csrfToken)) {
+		return outputHTML({ provider, error: "Session expired.", errorCode: "SESSION_EXPIRED" });
+	}
+	if (!env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) {
+		return outputHTML({ provider, error: "GitHub OAuth is not configured.", errorCode: "MISCONFIGURED_GITHUB_OAUTH" });
+	}
+
+	const state = crypto.randomUUID().replaceAll("-", "");
+	const redirectUri = env.GITHUB_OAUTH_REDIRECT_URI || `${url.origin}/auth/github/callback`;
+	const authUrl = new URL("https://github.com/login/oauth/authorize");
+	authUrl.searchParams.set("client_id", env.GITHUB_OAUTH_CLIENT_ID);
+	authUrl.searchParams.set("redirect_uri", redirectUri);
+	authUrl.searchParams.set("scope", "read:user user:email");
+	authUrl.searchParams.set("state", state);
+	authUrl.searchParams.set("allow_signup", "false");
+
+	return new Response(null, {
+		status: 302,
+		headers: {
+			Location: authUrl.toString(),
+			"Cache-Control": "no-store",
+			"Set-Cookie": `cms-auth-oauth-state=${state}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax; Secure`,
+		},
+	});
+};
+
+const handleGitHubOAuthCallback = async (request, env) => {
+	const url = new URL(request.url);
+	const provider = "github";
+	const code = String(url.searchParams.get("code") ?? "");
+	const state = String(url.searchParams.get("state") ?? "");
+	const oauthError = String(url.searchParams.get("error") ?? "");
+	const oauthErrorDesc = String(url.searchParams.get("error_description") ?? "");
+	const cookies = parseCookie(request);
+	const cookieState = String(cookies["cms-auth-oauth-state"] ?? "");
+
+	if (oauthError) {
+		return outputHTML({
+			provider,
+			error: oauthErrorDesc || "GitHub authorization was cancelled or rejected.",
+			errorCode: "GITHUB_OAUTH_REJECTED",
+		});
+	}
+	if (!code || !state || !cookieState || state !== cookieState) {
+		return outputHTML({ provider, error: "GitHub OAuth state mismatch.", errorCode: "STATE_MISMATCH" });
+	}
+	if (!env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) {
+		return outputHTML({ provider, error: "GitHub OAuth is not configured.", errorCode: "MISCONFIGURED_GITHUB_OAUTH" });
+	}
+
+	const redirectUri = env.GITHUB_OAUTH_REDIRECT_URI || `${url.origin}/auth/github/callback`;
+	let tokenResp;
+	try {
+		tokenResp = await fetch("https://github.com/login/oauth/access_token", {
+			method: "POST",
+			headers: {
+				Accept: "application/json",
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			body: new URLSearchParams({
+				client_id: env.GITHUB_OAUTH_CLIENT_ID,
+				client_secret: env.GITHUB_OAUTH_CLIENT_SECRET,
+				code,
+				redirect_uri: redirectUri,
+				state,
+			}).toString(),
+		});
+	} catch {
+		return outputHTML({ provider, error: "GitHub token exchange request failed.", errorCode: "TOKEN_EXCHANGE_REQUEST_FAILED" });
+	}
+
+	if (!tokenResp.ok) {
+		return outputHTML({ provider, error: "Failed to exchange GitHub OAuth code.", errorCode: "TOKEN_EXCHANGE_FAILED" });
+	}
+
+	const tokenData = await tokenResp.json().catch(() => null);
+	const accessToken = String(tokenData?.access_token ?? "");
+	if (!accessToken) {
+		return outputHTML({ provider, error: "GitHub did not return an access token.", errorCode: "MISSING_ACCESS_TOKEN" });
+	}
+
+	const ghHeaders = {
+		Accept: "application/vnd.github+json",
+		Authorization: `Bearer ${accessToken}`,
+		"User-Agent": "google-sveltia-auth-worker",
+	};
+
+	let userResp;
+	try {
+		userResp = await fetch("https://api.github.com/user", { headers: ghHeaders });
+	} catch {
+		return outputHTML({ provider, error: "Failed to reach GitHub user API.", errorCode: "PROFILE_REQUEST_FAILED" });
+	}
+	if (!userResp.ok) {
+		return outputHTML({ provider, error: "Failed to read GitHub user profile.", errorCode: "PROFILE_FETCH_FAILED" });
+	}
+
+	const user = await userResp.json().catch(() => ({}));
+	const login = String(user?.login ?? "").toLowerCase();
+	let email = String(user?.email ?? "").toLowerCase();
+
+	if (!email) {
+		let emailsResp;
+		try {
+			emailsResp = await fetch("https://api.github.com/user/emails", { headers: ghHeaders });
+		} catch {
+			emailsResp = null;
+		}
+		if (emailsResp?.ok) {
+			const emails = await emailsResp.json().catch(() => []);
+			const verified = Array.isArray(emails) ? emails.find((entry) => entry?.verified && entry?.email) : null;
+			if (verified?.email) email = String(verified.email).toLowerCase();
+		}
+	}
+
+	const hasAllowlist = toLowerList(env.ALLOWED_GITHUB_LOGINS).length || toLowerList(env.ALLOWED_GITHUB_EMAILS).length;
+	if (!hasAllowlist) {
+		return outputHTML({ provider, error: "GitHub allowlist is not configured.", errorCode: "MISSING_GITHUB_ALLOWLIST" });
+	}
+
+	const loginAllowed = login ? isAllowedGitHubLogin(login, env) : false;
+	const emailAllowed = email ? isAllowedGitHubEmail(email, env) : false;
+	if (!loginAllowed && !emailAllowed) {
+		return outputHTML({ provider, error: "GitHub account is not in the allowlist.", errorCode: "GITHUB_NOT_ALLOWED" });
+	}
+
+	return outputHTML({ provider, token: env.GITHUB_PAT });
+};
+
 const text = (status, body) =>
 	new Response(body, {
 		status,
@@ -476,6 +635,12 @@ export default {
 		}
 		if (request.method === "POST" && pathname === "/auth/google") {
 			return handleGoogleAuth(request, env);
+		}
+		if (request.method === "GET" && pathname === "/auth/github/start") {
+			return handleGitHubOAuthStart(request, env);
+		}
+		if (request.method === "GET" && pathname === "/auth/github/callback") {
+			return handleGitHubOAuthCallback(request, env);
 		}
 		if (request.method === "GET" && pathname === "/health") {
 			return text(200, "ok");
