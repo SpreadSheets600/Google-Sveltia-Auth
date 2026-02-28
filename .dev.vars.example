@@ -4,10 +4,23 @@ GITHUB_PAT=ghp_xxx_replace_me
 # Google Auth
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_IDS=your-google-client-id.apps.googleusercontent.com
+
 ALLOWED_GOOGLE_EMAILS=your-email@gmail.com,editor@gmail.com
 
-# JSON Object For Email Address
-EMAIL_PASSWORD_USERS={"your-email@gmail.com":"<sha256_hex_password>"}
+# GitHub OAuth
+GITHUB_OAUTH_CLIENT_ID=your-github-oauth-client-id
+GITHUB_OAUTH_CLIENT_SECRET=your-github-oauth-client-secret
+
+GITHUB_OAUTH_REDIRECT_URI=https://your-worker-domain.workers.dev/auth/github/callback
+ALLOWED_GITHUB_LOGINS=yourgithubusername
+ALLOWED_GITHUB_EMAILS=your-email@gmail.com
+
+# Email/Password Allowlist
+# Supports Hash Or Plain Password:
+# JSON object: {"you@gmail.com":"plainPasswordOrSha256"}
+# JSON array: [{"email":"you@gmail.com","password":"plainPassword"}]
+# CSV: you@gmail.com:plainPassword,editor@gmail.com:<sha256_hex>
+EMAIL_PASSWORD_USERS={"your-email@gmail.com":"your-plain-password"}
 
 # Optional Settings
 ALLOWED_DOMAINS=localhost:4321,*.yourdomain.com

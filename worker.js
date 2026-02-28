@@ -202,10 +202,7 @@ const renderAuthPage = (provider, csrfToken, env) => {
 	const googleEnabled = Boolean(googleClientId);
 	const googleScript = googleEnabled ? `<script src="https://accounts.google.com/gsi/client" async defer></script>` : "";
 	const githubOauthEnabled = Boolean(env.GITHUB_OAUTH_CLIENT_ID && env.GITHUB_OAUTH_CLIENT_SECRET);
-	const githubButton =
-		githubOauthEnabled ?
-			`<button id="githubOAuthButton" type="button" class="oauth-btn">Continue with GitHub</button>`
-		:	`<p class="muted">GitHub OAuth is currently disabled.</p>`;
+	const githubButton = githubOauthEnabled ? `<button id="githubOAuthButton" type="button" class="oauth-btn github">GitHub</button>` : "";
 	const googleButton =
 		googleEnabled ?
 			`
@@ -213,7 +210,16 @@ const renderAuthPage = (provider, csrfToken, env) => {
         <div id="googleSignInButton" class="google-button"></div>
       </div>
     `
-		:	`<p class="muted">Google login is currently disabled.</p>`;
+		:	"";
+	const oauthSection =
+		githubButton || googleButton ?
+			`
+    <div class="oauth-group">
+      ${githubButton}
+      ${googleButton}
+    </div>
+    `
+		:	"";
 
 	return new Response(
 		`
@@ -227,50 +233,43 @@ const renderAuthPage = (provider, csrfToken, env) => {
   <style>
     :root { color-scheme: light; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 20px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: radial-gradient(1200px 600px at 10% 0%, #eef2ff 0%, #f3f5fa 40%, #eef2f7 100%); color: #111827; }
-    .wrap { width: min(460px, 100%); background: #fff; border-radius: 16px; padding: 28px; box-shadow: 0 16px 40px rgba(15, 23, 42, .10); border: 1px solid #e5e7eb; }
-    h1 { margin: 0 0 8px; font-size: 22px; }
-    p { margin: 0 0 18px; color: #374151; line-height: 1.5; }
-    form { display: grid; gap: 10px; }
-    label { font-weight: 600; font-size: 14px; }
-    input { width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font-size: 14px; transition: border-color .15s ease, box-shadow .15s ease; background: #fff; }
-    input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79, 70, 229, .16); }
-    button { width: 100%; border: none; border-radius: 10px; background: linear-gradient(180deg, #1f2937 0%, #111827 100%); color: white; padding: 11px 14px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .08s ease, box-shadow .15s ease; }
-    button:hover { box-shadow: 0 8px 18px rgba(17, 24, 39, .18); }
-    button:active { transform: translateY(1px); }
-    .sep { margin: 18px 0 14px; display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 12px; letter-spacing: .06em; font-weight: 600; }
-    .sep::before, .sep::after { content: ""; height: 1px; flex: 1; background: #e2e8f0; }
-    .oauth-btn { background: #0f172a; }
-    .oauth-btn:hover { box-shadow: 0 8px 18px rgba(15, 23, 42, .2); }
-    .google-wrap { width: 100%; min-height: 42px; }
-    .google-button { width: 100%; min-height: 42px; }
-    #status { margin-top: 14px; font-size: 14px; min-height: 20px; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: linear-gradient(160deg, #f6f7fb 0%, #eceff6 100%); color: #111827; }
+    .wrap { width: min(360px, 100%); background: rgba(255, 255, 255, .94); border-radius: 20px; padding: 28px; box-shadow: 0 28px 70px rgba(15, 23, 42, .10); border: 1px solid rgba(148, 163, 184, .22); backdrop-filter: blur(18px); }
+    h1 { margin: 0 0 20px; font-size: 1rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #334155; }
+    form { display: grid; gap: 12px; }
+    input { width: 100%; border: 1px solid #d7deea; border-radius: 14px; padding: 14px 15px; font-size: 15px; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; background: #fff; color: #111827; }
+    input::placeholder { color: #94a3b8; }
+    input:focus { outline: none; border-color: #0f172a; box-shadow: 0 0 0 4px rgba(15, 23, 42, .08); transform: translateY(-1px); }
+    button { width: 100%; border: none; border-radius: 14px; padding: 14px 15px; font-size: 15px; font-weight: 700; cursor: pointer; transition: transform .12s ease, box-shadow .15s ease, opacity .15s ease; }
+    button:hover { transform: translateY(-1px); }
+    button:active { transform: translateY(0); }
+    button:disabled { cursor: default; opacity: .7; transform: none; }
+    button[type="submit"] { margin-top: 4px; background: #0f172a; color: #fff; box-shadow: 0 14px 28px rgba(15, 23, 42, .18); }
+    .oauth-group { margin-top: 14px; display: grid; gap: 10px; }
+    .oauth-btn { background: #fff; color: #111827; border: 1px solid #d7deea; box-shadow: 0 10px 22px rgba(148, 163, 184, .14); }
+    .oauth-btn.github { background: #111827; color: #fff; border-color: #111827; box-shadow: 0 14px 28px rgba(17, 24, 39, .18); }
+    .google-wrap { width: 100%; min-height: 44px; }
+    .google-button { width: 100%; min-height: 44px; }
+    #status { margin-top: 12px; min-height: 20px; font-size: 13px; text-align: center; }
     .error { color: #b91c1c; }
     .ok { color: #047857; }
-    .muted { color: #6b7280; font-size: 13px; }
+    .muted { color: #64748b; }
     @media (max-width: 480px) {
-      .wrap { padding: 20px; border-radius: 14px; }
-      h1 { font-size: 20px; }
+      body { padding: 16px; }
+      .wrap { padding: 22px; border-radius: 18px; }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Sign in to CMS</h1>
-    <p>Use a whitelisted account. Backend provider: <strong>${escapeHtml(provider)}</strong>.</p>
+    <h1>Sign in</h1>
 
     <form id="emailForm">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="username" required />
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required />
-      <button type="submit">Sign in with Email</button>
+      <input id="email" name="email" type="email" autocomplete="username" placeholder="Email" required />
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Password" required />
+      <button type="submit">Sign in</button>
     </form>
-
-    <div class="sep">OR</div>
-    ${githubButton}
-    <div class="sep">OR</div>
-    ${googleButton}
+    ${oauthSection}
     <div id="status" class="muted"></div>
   </div>
 

@@ -2,6 +2,7 @@ name = "google-sveltia-auth"
 main = "worker.js"
 
 compatibility_date = "2026-02-16"
+keep_vars = true
 
 [observability.logs]
 enabled = true

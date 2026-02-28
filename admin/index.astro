@@ -1,0 +1,186 @@
+---
+export const prerender = true;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="robots" content="noindex" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>CMS Login</title>
+		<style>
+			:root {
+				--bg: #f4f6fb;
+				--surface: #ffffff;
+				--ink: #0f172a;
+				--muted: #475569;
+				--line: #dbe3f2;
+				--brand: #1d4ed8;
+				--brand-hover: #1e40af;
+			}
+
+			html,
+			body {
+				width: 100%;
+				height: 100%;
+				margin: 0;
+			}
+
+			body {
+				font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+				background: radial-gradient(900px 500px at 10% -10%, #e0e7ff 0%, transparent 55%), radial-gradient(900px 500px at 100% 100%, #dbeafe 0%, transparent 55%), var(--bg);
+				color: var(--ink);
+			}
+
+			#auth-shell {
+				min-height: 100%;
+				display: grid;
+				place-items: center;
+				padding: 24px;
+			}
+
+			.login-card {
+				width: min(460px, 100%);
+				background: var(--surface);
+				border: 1px solid var(--line);
+				border-radius: 16px;
+				padding: 28px;
+				box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+			}
+
+			.login-card h1 {
+				margin: 0 0 8px;
+				font-size: 24px;
+				line-height: 1.2;
+			}
+
+			.login-card p {
+				margin: 0;
+				color: var(--muted);
+				line-height: 1.5;
+			}
+
+			.actions {
+				margin-top: 18px;
+				display: flex;
+				gap: 10px;
+				align-items: center;
+			}
+
+			#open-cms-login {
+				border: 0;
+				border-radius: 10px;
+				padding: 11px 14px;
+				font-size: 14px;
+				font-weight: 700;
+				color: #fff;
+				background: var(--brand);
+				cursor: pointer;
+				transition: background-color 140ms ease;
+			}
+
+			#open-cms-login:hover {
+				background: var(--brand-hover);
+			}
+
+			#status {
+				font-size: 13px;
+				color: var(--muted);
+			}
+
+			#nc-root {
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				display: none;
+			}
+		</style>
+	</head>
+	<body>
+		<main id="auth-shell">
+			<section class="login-card">
+				<h1>Sign in to your CMS</h1>
+				<p>Use this button to open Cloudflare auth directly.</p>
+				<div class="actions">
+					<button id="open-cms-login" type="button">Continue to Login</button>
+					<span id="status">Ready</span>
+				</div>
+			</section>
+		</main>
+		<div id="nc-root"></div>
+		<script is:inline>
+			window.CMS_MANUAL_INIT = true;
+		</script>
+		<script is:inline src="https://unpkg.com/@sveltia/cms/dist/sveltia-cms.js"></script>
+		<script is:inline>
+			(() => {
+				let started = false;
+				const siteUrl = window.location.origin;
+				const faviconHref = document.querySelector('link[rel="icon"]')?.getAttribute("href");
+				const authShell = document.getElementById("auth-shell");
+				const root = document.getElementById("nc-root");
+				const openButton = document.getElementById("open-cms-login");
+				const statusEl = document.getElementById("status");
+				const config = {
+					site_url: siteUrl,
+					logout_redirect_url: `${siteUrl}/`,
+				};
+
+				if (faviconHref) {
+					config.logo = {
+						src: faviconHref,
+						show_in_header: true,
+					};
+				}
+
+				const setStatus = (text) => {
+					if (statusEl) statusEl.textContent = text;
+				};
+
+				const findLoginButton = () => {
+					const actions = [...root.querySelectorAll("button, a")];
+					const preferred = actions.find((el) => /github/i.test((el.textContent || "").trim()));
+					if (preferred) return preferred;
+					return actions.find((el) => /(sign in|log in|continue)/i.test((el.textContent || "").trim())) || null;
+				};
+
+				const clickLoginButton = async (retries = 40, delay = 120) => {
+					for (let i = 0; i < retries; i += 1) {
+						const button = findLoginButton();
+						if (button) {
+							button.click();
+							return true;
+						}
+						await new Promise((resolve) => setTimeout(resolve, delay));
+					}
+					return false;
+				};
+
+				const startCmsLogin = async () => {
+					if (started) return;
+					started = true;
+					setStatus("Opening Cloudflare auth...");
+					openButton?.setAttribute("disabled", "true");
+					root.style.display = "block";
+					root.style.visibility = "hidden";
+
+					// Keep popup creation in direct user gesture context so browser popup blockers
+					// are less likely to block the auth window when CMS triggers OAuth.
+					window.open("about:blank", "auth", "width=600,height=800");
+
+					await CMS.init({ config });
+					const opened = await clickLoginButton();
+
+					authShell.style.display = "none";
+					root.style.visibility = "visible";
+					if (!opened) {
+						setStatus("Could not auto-open auth. Showing CMS login.");
+					}
+				};
+
+				openButton?.addEventListener("click", startCmsLogin);
+			})();
+		</script>
+	</body>
+</html>
